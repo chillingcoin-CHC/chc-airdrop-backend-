@@ -7,24 +7,21 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// ✅ In-memory data stores
-const eligibleWallets = new Set();       // Stores claimed wallets
-const claimedWallets = new Set();        // Prevents double claiming
-const referrals = {};                    // wallet -> referrer
-const referralCounts = {};               // referrer -> count
+const eligibleWallets = new Set();
+const referrals = {};
+const referralCounts = {};
 
-// ✅ Home
+// ✅ Root test
 app.get("/", (req, res) => {
   res.send("🎉 CHC Airdrop Backend is Live!");
 });
 
-// ✅ Eligibility check
+// ✅ Check eligibility
 app.get("/check-eligibility", (req, res) => {
   const { wallet } = req.query;
   if (!wallet || !wallet.startsWith("0x")) {
     return res.status(400).json({ error: "Invalid wallet address" });
   }
-
   const isEligible = eligibleWallets.has(wallet.toLowerCase());
   res.json({ eligible: isEligible });
 });
@@ -32,14 +29,14 @@ app.get("/check-eligibility", (req, res) => {
 // ✅ Submit referral
 app.post("/referral", (req, res) => {
   const { wallet, referrer } = req.body;
-
   if (!wallet || !wallet.startsWith("0x")) {
     return res.status(400).json({ error: "Invalid wallet address" });
   }
 
   const lowerWallet = wallet.toLowerCase();
+  const lowerRef = referrer?.toLowerCase();
 
-  if (lowerWallet === referrer?.toLowerCase()) {
+  if (lowerWallet === lowerRef) {
     return res.status(400).json({ error: "Self-referral not allowed" });
   }
 
@@ -47,56 +44,45 @@ app.post("/referral", (req, res) => {
     return res.status(400).json({ error: "Referral already submitted" });
   }
 
-  referrals[lowerWallet] = referrer?.toLowerCase() || null;
-
-  if (referrer && referrer.startsWith("0x")) {
-    const lowerReferrer = referrer.toLowerCase();
-    referralCounts[lowerReferrer] = (referralCounts[lowerReferrer] || 0) + 1;
+  referrals[lowerWallet] = lowerRef || null;
+  if (lowerRef) {
+    referralCounts[lowerRef] = (referralCounts[lowerRef] || 0) + 1;
   }
 
   eligibleWallets.add(lowerWallet);
-  res.json({ success: true, referredBy: referrer || null });
+  res.json({ success: true, referredBy: lowerRef || null });
 });
 
 // ✅ Claim airdrop
 app.post("/claim", (req, res) => {
   const { wallet, referrer } = req.body;
-
   if (!wallet || !wallet.startsWith("0x")) {
     return res.status(400).json({ success: false, message: "Invalid wallet" });
   }
 
-  const normalizedWallet = wallet.toLowerCase();
+  const lowerWallet = wallet.toLowerCase();
+  const lowerRef = referrer?.toLowerCase();
 
-  // ❌ Already claimed
-  if (claimedWallets.has(normalizedWallet)) {
+  if (eligibleWallets.has(lowerWallet)) {
     return res.json({ success: false, message: "Wallet already claimed" });
   }
 
-  // ✅ Mark as claimed
-  claimedWallets.add(normalizedWallet);
-  eligibleWallets.add(normalizedWallet);
+  eligibleWallets.add(lowerWallet);
 
-  // ✅ Save referral if valid
-  if (
-    referrer &&
-    referrer.startsWith("0x") &&
-    referrer.toLowerCase() !== normalizedWallet
-  ) {
-    referrals[normalizedWallet] = referrer.toLowerCase();
-    referralCounts[referrer.toLowerCase()] =
-      (referralCounts[referrer.toLowerCase()] || 0) + 1;
+  if (lowerRef && lowerWallet !== lowerRef) {
+    referrals[lowerWallet] = lowerRef;
+    referralCounts[lowerRef] = (referralCounts[lowerRef] || 0) + 1;
   }
 
-  return res.json({ success: true, message: "Airdrop claimed." });
+  res.json({ success: true, message: "Airdrop claimed." });
 });
 
-// ✅ Admin export of all claimed wallets
-app.get("/admin/export", (req, res) => {
-  const data = Array.from(claimedWallets).map((wallet) => ({
+// ✅ Admin export for manual distribution
+app.get("/export", (req, res) => {
+  const data = Array.from(eligibleWallets).map((wallet) => ({
     wallet,
     referrer: referrals[wallet] || null,
-    referralCount: referralCounts[wallet] || 0,
+    referralsMade: referralCounts[wallet] || 0
   }));
   res.json(data);
 });
